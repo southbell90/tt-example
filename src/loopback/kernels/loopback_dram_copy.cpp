@@ -23,11 +23,17 @@ void kernel_main() {
     // when creating the buffers.
     const uint32_t tile_size_bytes = 32 * 32 * 2;
     constexpr auto in0_args = TensorAccessorArgs<0>();
+
+    // TensorAccessor 객체는 bank addressing과 page size를 자동으로 다룬다.
     const auto in0 = TensorAccessor(in0_args, dram_buffer_src_addr, tile_size_bytes);
 
     constexpr auto out0_args = TensorAccessorArgs<in0_args.next_compile_time_args_offset()>();
     const auto out0 = TensorAccessor(out0_args, dram_buffer_dst_addr, tile_size_bytes);
 
+    /*
+        데이터의 이동은 비동기적으로 일어나게 돼서 kernel이 multiple request를 날릴 수 있다.
+        barrier 함수가 필요한 이유가 이것 때문이다.
+    */
     for (uint32_t i = 0; i < num_tiles; i++) {
         // Issue a read to the NoC and write to the L1 buffer. This operation is asynchronous.
         // thus a barrier is needed to ensure that the read is complete before the write.

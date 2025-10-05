@@ -1,1 +1,2 @@
 add_subdirectory(loopback)
+add_subdirectory(hello_world_compute_kernel)

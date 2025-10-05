@@ -1,0 +1,2 @@
+add_executable(hello_world_compute_kernel ${CMAKE_CURRENT_SOURCE_DIR}/hello_world_compute_kernel.cpp)
+target_link_libraries(hello_world_compute_kernel PRIVATE TT::Metalium)

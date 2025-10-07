@@ -1,0 +1,2 @@
+add_executable(hello_world_data_movement ${CMAKE_CURRENT_SOURCE_DIR}/hello_world_data_movement.cpp)
+target_link_libraries(hello_world_data_movement PRIVATE TT::Metalium)

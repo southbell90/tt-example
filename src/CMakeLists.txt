@@ -1,3 +1,4 @@
 add_subdirectory(loopback)
 add_subdirectory(hello_world_compute_kernel)
 add_subdirectory(hello_world_data_movement)
+add_subdirectory(add_2_integers_in_riscv)

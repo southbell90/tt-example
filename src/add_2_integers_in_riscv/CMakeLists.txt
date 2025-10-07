@@ -1,0 +1,2 @@
+add_executable(add_2_integers_in_riscv ${CMAKE_CURRENT_SOURCE_DIR}/add_2_integers_in_riscv.cpp)
+target_link_libraries(add_2_integers_in_riscv PRIVATE TT::Metalium)

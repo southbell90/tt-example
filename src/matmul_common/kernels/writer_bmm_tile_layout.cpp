@@ -3,18 +3,18 @@
 void kernel_main() {
     // out tensor args
     uint32_t out_tensor_addr = get_arg_val<uint32_t>(0);
-    uint32_t out_tensor_start_tile_id = get_arg_val<uint32_t>(1);
-    uint32_t out_tensor_stride_w = get_arg_val<uint32_t>(2);
-    uint32_t out_tensor_stride_h = get_arg_val<uint32_t>(3);
-    uint32_t out_tensor_next_subblock_stride_w = get_arg_val<uint32_t>(4);
-    uint32_t out_tensor_next_subblock_stride_h = get_arg_val<uint32_t>(5);
+    uint32_t out_tensor_start_tile_id = get_arg_val<uint32_t>(1);       // output_idx_x * per_core_N + output_idx_y * per_core_M * Nt
+    uint32_t out_tensor_stride_w = get_arg_val<uint32_t>(2);        //  1
+    uint32_t out_tensor_stride_h = get_arg_val<uint32_t>(3);        //  Nt
+    uint32_t out_tensor_next_subblock_stride_w = get_arg_val<uint32_t>(4);      //  out_subblock_w
+    uint32_t out_tensor_next_subblock_stride_h = get_arg_val<uint32_t>(5);      //  out_subblock_h * Nt
 
     // out subblock args
-    uint32_t out_subblock_w = get_arg_val<uint32_t>(6);
-    uint32_t out_subblock_h = get_arg_val<uint32_t>(7);
-    uint32_t out_subblock_tile_count = get_arg_val<uint32_t>(8);
-    uint32_t out_num_subblocks_w = get_arg_val<uint32_t>(9);
-    uint32_t out_num_subblocks_h = get_arg_val<uint32_t>(10);
+    uint32_t out_subblock_w = get_arg_val<uint32_t>(6);     //  out_subblock_w = 2
+    uint32_t out_subblock_h = get_arg_val<uint32_t>(7);     //  out_subblock_h = 4
+    uint32_t out_subblock_tile_count = get_arg_val<uint32_t>(8);        //  out_subblock_w * out_subblock_h = 8
+    uint32_t out_num_subblocks_w = get_arg_val<uint32_t>(9);        //  per_core_N / out_subblock_w = 1
+    uint32_t out_num_subblocks_h = get_arg_val<uint32_t>(10);       //  per_core_M / out_subblock_h = 5
 
     // batch args
     uint32_t MtNt = get_arg_val<uint32_t>(11);  // if 0

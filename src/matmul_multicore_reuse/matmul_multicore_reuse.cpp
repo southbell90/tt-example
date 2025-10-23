@@ -52,6 +52,12 @@ void golden_matmul(
     }
 }
 
+    /*
+        본 예제에서는 행렬을 타일들의 묶음인 block으로 나누고 다시 block을 tensix core에서 sub-block 단위로 처리한다.
+        데이터를 읽어올 때는 block 단위로 읽어서 L1의 cb에 저장하고
+        compute kernel에서는 읽어온 block을 다시 sub-block 단위로 나누어서 sub-block 단위로 계산한다.
+    */
+
 void matmul_multicore_reuse(
     std::vector<bfloat16>& a,
     std::vector<bfloat16>& b,
@@ -127,15 +133,15 @@ void matmul_multicore_reuse(
     uint32_t out_CB_size = out_CB_tiles * single_tile_size;
 
     // Compute kernel compile time args
-    uint32_t num_blocks = (Kt / in0_block_w);   // how many K-blocks
+    uint32_t num_blocks = (Kt / in0_block_w);   // 입력 행렬 A(MxK)에서 K축의 block의 갯수
 
     uint32_t in0_num_subblocks = (per_core_M / out_subblock_h);
-    uint32_t in0_block_num_tiles = out_subblock_h * in0_block_w * in0_num_subblocks;
+    uint32_t in0_block_num_tiles = out_subblock_h * in0_block_w * in0_num_subblocks;    // A에서 하나의 block에 포함된 타일의 갯수
     uint32_t in0_subblock_num_tiles = out_subblock_h * in0_block_w;
 
     uint32_t in1_num_subblocks = (per_core_N / out_subblock_w);
     uint32_t in1_block_num_tiles = out_subblock_w * in0_block_w * in1_num_subblocks;
-    uint32_t in1_per_core_w = out_subblock_w * in1_num_subblocks;
+    uint32_t in1_per_core_w = out_subblock_w * in1_num_subblocks;  
 
     uint32_t out_subblock_num_tiles = out_subblock_h * out_subblock_w;
 
@@ -164,9 +170,9 @@ void matmul_multicore_reuse(
     // uint32_t num_cores_x = compute_with_storage_grid_size.x;
     // uint32_t num_cores_y = compute_with_storage_grid_size.y;
 
-    uint32_t num_blocks_y = Mt / per_core_M;
-    uint32_t num_blocks_x = Nt / per_core_N;
-    uint32_t num_blocks_total = num_blocks_y * num_blocks_x;
+    uint32_t num_blocks_y = Mt / per_core_M;        // 1
+    uint32_t num_blocks_x = Nt / per_core_N;        // 10
+    uint32_t num_blocks_total = num_blocks_y * num_blocks_x;        // 1* 10 = 10
     TT_ASSERT(num_blocks_total <= num_cores_x * num_cores_y);
     CoreRangeSet all_cores(
         tt::tt_metal::num_cores_to_corerangeset(num_blocks_x * num_blocks_y, compute_with_storage_grid_size, true));
@@ -263,6 +269,8 @@ void matmul_multicore_reuse(
      * Kernels - Runtime arguments
      */
     uint32_t num_blocks_read = 0;
+    // num_blocks_x = 10, num_blocks_y = 1
+    // 즉 10개 num_blocks_x * num_blocks_y의 개수만큼 RuntimeArgs를 만든다. (10개의 코어가 돌아감)
     for (int output_idx_y = 0; output_idx_y < num_blocks_y; output_idx_y++) {
         for (int output_idx_x = 0; output_idx_x < num_blocks_x; output_idx_x++) {
             int core_idx_x = num_blocks_read % num_cores_x;

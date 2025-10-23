@@ -5,13 +5,13 @@ void kernel_main() {
     // in0 tensor args
     uint32_t in0_tensor_addr = get_arg_val<uint32_t>(0);
     uint32_t in0_tensor_start_tile_id = get_arg_val<uint32_t>(1);
-    uint32_t in0_tensor_stride_w = get_arg_val<uint32_t>(2);
-    uint32_t in0_tensor_stride_h = get_arg_val<uint32_t>(3);
-    uint32_t in0_tensor_next_block_stride = get_arg_val<uint32_t>(4);
+    uint32_t in0_tensor_stride_w = get_arg_val<uint32_t>(2);    // 1
+    uint32_t in0_tensor_stride_h = get_arg_val<uint32_t>(3);    // Kt = 20
+    uint32_t in0_tensor_next_block_stride = get_arg_val<uint32_t>(4);      // in0_block_w = 2
 
     // in0 block args
-    uint32_t in0_block_w = get_arg_val<uint32_t>(5);
-    uint32_t in0_block_h = get_arg_val<uint32_t>(6);
+    uint32_t in0_block_w = get_arg_val<uint32_t>(5);        // 2
+    uint32_t in0_block_h = get_arg_val<uint32_t>(6);        // per_core_M = 20
     uint32_t in0_block_num_tiles = get_arg_val<uint32_t>(7);
 
     // in1 tensor args
@@ -59,6 +59,10 @@ void kernel_main() {
             l1_write_addr_in0 = get_write_ptr(cb_id_in0);
             l1_write_addr_in1 = get_write_ptr(cb_id_in1);
 
+            // 데이터를 읽어 올 때는 block 단위로 읽어온다.
+            // 본 예제에서는 A_block = 20x2 , B_block = 2x2
+            // cb0에는 A_block의 tile 40개가 왼쪽->오른쪽, 위쪽->아래쪽으로 id(index)를 주면서 저장된다.
+            // cb1에는 B_block의 tile 4개가가 왼쪽->오른쪽, 위쪽->아래쪽으로 id(index)를 주면서 저장된다.
             uint32_t in0_tensor_row_start_tile_id = in0_tensor_current_block_start_tile_id;
             for (uint32_t h = 0; h < in0_block_h; h++) {
                 uint32_t in0_tensor_tile_id = in0_tensor_row_start_tile_id;

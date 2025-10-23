@@ -1,5 +1,7 @@
 {
     "files.associations": {
-        "print": "cpp"
+        "print": "cpp",
+        "cstdint": "cpp",
+        "tensor": "cpp"
     }
 }

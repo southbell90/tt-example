@@ -16,8 +16,7 @@ using namespace tt::tt_metal;
 
 /*
     FPU가 지원하는 data type에 대한 테스트 파일이다.
-    FPU는 floating-point에 관한 연산만 지원한다.
-    만약 uint8 같은 것을 계산하고 싶으면 fp 형태로 형변환 한 뒤 계산하고 다시 결과를 형변환 해야한다.
+    FPU에서 int8로 연산을 하고 output은 int32로 나온다.
 */
 #ifndef OVERRIDE_KERNEL_PREFIX
 #define OVERRIDE_KERNEL_PREFIX ""

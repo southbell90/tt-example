@@ -39,8 +39,8 @@ void golden_matmul(
 }
 
 void matmul_single_core(
-    const std::vector<bfloat16>& W,
-    const std::vector<bfloat16>& a,
+    const std::vector<_Float16>& W,
+    const std::vector<_Float16>& a,
     std::vector<float>& output,
     uint32_t N,
     const std::shared_ptr<distributed::MeshDevice>& mesh_device) {
@@ -72,7 +72,7 @@ void matmul_single_core(
     auto src1_dram_buffer = distributed::MeshBuffer::create(buffer_config_B, dram_config, mesh_device.get());
     auto dst_dram_buffer = distributed::MeshBuffer::create(buffer_config_C, out_dram_config, mesh_device.get());
 
-    tt::DataFormat cb_data_format = tt::DataFormat::Float16_b;
+    tt::DataFormat cb_data_format = tt::DataFormat::Float16;
     MathFidelity math_fidelity = MathFidelity::HiFi4;
     uint32_t src0_cb_index = CBIndex::c_0;
     uint32_t num_input_tiles = 2;
@@ -171,7 +171,7 @@ int main() {
     // input vectors with various ranges of values
     std::random_device rd;
     std::mt19937 engine(rd());
-    std::uniform_int_distribution<std::uint8_t> dist(0, 5);
+    std::uniform_int_distribution<std::uint8_t> dist(0, 10);
 
     std::vector<uint8_t> W_vec(N * N);
     std::vector<uint8_t> a_vec(N * TILE_WIDTH);
@@ -187,9 +187,9 @@ int main() {
     std::vector<uint32_t> golden_vec(N*N);
     golden_matmul(W_vec, a_vec, golden_vec, N);
 
-    std::vector<bfloat16> A_bf(W_vec.size()), B_bf(a_vec.size());
-    for (size_t i = 0; i < W_vec.size(); ++i) A_bf[i] = bfloat16(float(W_vec[i]));   // or apply (x - zp) * scale
-    for (size_t i = 0; i < a_vec.size(); ++i) B_bf[i] = bfloat16(float(a_vec[i]));
+    std::vector<_Float16> A_bf(W_vec.size()), B_bf(a_vec.size());
+    for (size_t i = 0; i < W_vec.size(); ++i) A_bf[i] = static_cast<_Float16>(W_vec[i]);   // or apply (x - zp) * scale
+    for (size_t i = 0; i < a_vec.size(); ++i) B_bf[i] = static_cast<_Float16>(a_vec[i]);
     A_bf = tilize_nfaces(A_bf, N, N);
     B_bf = tilize_nfaces(B_bf, N, TILE_WIDTH);
 

@@ -28,12 +28,12 @@ void golden_matmul(
     std::vector<uint32_t>& output,
     uint32_t N
 ) {
-        for(int i = 0; i < N; i++) {
-            for(int j = 0; j < N; j++) {
-                for(int k = 0; k < N; k++) {
-                    output.at(i * N + j) += (a.at(i * N + k) * b.at(k*N + j));
-                }
+    for(int i = 0; i < N; i++) {
+        for(int j = 0; j < TILE_WIDTH; j++) {
+            for(int k = 0; k < N; k++) {
+                output.at(i * TILE_WIDTH + j) += (a.at(i * N + k) * b.at(k * TILE_WIDTH + j));
             }
+        }
     }
 }
 
@@ -163,7 +163,7 @@ int main() {
     std::shared_ptr<distributed::MeshDevice> mesh_device = distributed::MeshDevice::create_unit_mesh(device_id);
 
     // parameters for the matrix multiplication
-    constexpr uint32_t N = 32;  
+    constexpr uint32_t N = 16384;   // N = 2^14  
 
     static_assert(N % TILE_WIDTH == 0, "N must be divisible by TILE_WIDTH");
 
@@ -183,7 +183,7 @@ int main() {
     }
 
     // Golden Matmul running on CPU so we can compare later
-    std::vector<uint32_t> golden_vec(N*N);
+    std::vector<uint32_t> golden_vec(N * TILE_WIDTH);
     golden_matmul(W_vec, a_vec, golden_vec, N);
 
     std::vector<uint8_t> A_bf(W_vec.size()), B_bf(a_vec.size());
@@ -202,7 +202,7 @@ int main() {
     pass &= mesh_device->close();
 
     // 검증
-    for(int i = 0; i < N * N; i++) {
+    for(int i = 0; i < N * TILE_WIDTH; i++) {
         if(golden_vec.at(i) != result_vec.at(i)){
             fmt::print("golden_vec != result_vec at = {}, golden_vec = {}, result_vec = {}\n", i, golden_vec.at(i), result_vec.at(i));
         }

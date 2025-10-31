@@ -18,32 +18,34 @@ void MAIN {
     mm_init(cb_in0, cb_in1, cb_out);
 
 
-    tile_regs_acquire();
-    for (uint32_t j = 0; j < Nt; ++j) {
+    for(uint32_t i = 0; i < Nt; i++) {
+        tile_regs_acquire();
+        for (uint32_t j = 0; j < Nt; ++j) {
 
-        cb_wait_front(cb_in0, 1);
-        cb_wait_front(cb_in1, 1);
+            cb_wait_front(cb_in0, 1);
+            cb_wait_front(cb_in1, 1);
 
-        matmul_tiles(cb_in0, cb_in1, 0, 0, 0, false);
+            matmul_tiles(cb_in0, cb_in1, 0, 0, 0, false);
 
-        cb_pop_front(cb_in0, 1);
-        cb_pop_front(cb_in1, 1);
+            cb_pop_front(cb_in0, 1);
+            cb_pop_front(cb_in1, 1);
 
 
+        }
+        // Commit and wait for the registers are populated with the results from the FPU
+        tile_regs_commit();
+        tile_regs_wait();
+
+        // Ensure the output circular buffer has space for the result tile.
+        cb_reserve_back(cb_out, 1);
+        // Pack the result tile into the output circular buffer.
+        pack_tile(0, cb_out);
+        // Mark the output tile as ready so the writer can read it.
+        cb_push_back(cb_out, 1);
+
+        // We don't need the registers anymore, so we can release them and prepare for the next output tile.
+        tile_regs_release();
     }
-    // Commit and wait for the registers are populated with the results from the FPU
-    tile_regs_commit();
-    tile_regs_wait();
-
-    // Ensure the output circular buffer has space for the result tile.
-    cb_reserve_back(cb_out, 1);
-    // Pack the result tile into the output circular buffer.
-    pack_tile(0, cb_out);
-    // Mark the output tile as ready so the writer can read it.
-    cb_push_back(cb_out, 1);
-
-    // We don't need the registers anymore, so we can release them and prepare for the next output tile.
-    tile_regs_release();
-    
+        
 }
 }  // namespace NAMESPACE

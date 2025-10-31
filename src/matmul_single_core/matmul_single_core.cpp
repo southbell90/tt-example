@@ -50,7 +50,7 @@ void golden_matmul(
 // Matrix multiplication using the accelerator.
 // Input a and b as well as output are vectors of bfloat16. But in the tiled layout.
 // The input a is of size MxK, input b is of size KxN, and the output c is of size MxN.
-// For this function, M and N must be divisible by TILE_HEIGHT and TILE_WIDTH respectively as that is the native unit
+// For this function, M, N and N must be divisible by TILE_HEIGHT and TILE_WIDTH respectively as that is the native unit
 // of computation on the accelerator.
 void matmul_single_core(
     const std::vector<bfloat16>& a,
@@ -93,29 +93,23 @@ void matmul_single_core(
 
     // Create circular buffers for the input and output data.
     // Using 2 tiles per circular buffer to allow for double buffering (data movement can be reading from one tile while
-    // the compute kernel is using the other tile). This number can be adjusted based on the use case. But generally
+    // the compute kernel is using the other tile). This number can be adjusted based on the use case. But geberally
     // diminishing returns observed after several tiles.
     tt::DataFormat cb_data_format = tt::DataFormat::Float16_b;
     MathFidelity math_fidelity = MathFidelity::HiFi4;
     uint32_t src0_cb_index = CBIndex::c_0;
     uint32_t num_input_tiles = 2;
-
-    // Circular buffer for matrix A tiles
     CircularBufferConfig cb_src0_config =
         CircularBufferConfig(num_input_tiles * single_tile_size, {{src0_cb_index, cb_data_format}})
             .set_page_size(src0_cb_index, single_tile_size);
     tt_metal::CreateCircularBuffer(program, core, cb_src0_config);
 
-
-    // Circular buffer for matrix B tiles
     uint32_t src1_cb_index = CBIndex::c_1;
     CircularBufferConfig cb_src1_config =
         CircularBufferConfig(num_input_tiles * single_tile_size, {{src1_cb_index, cb_data_format}})
             .set_page_size(src1_cb_index, single_tile_size);
     tt_metal::CreateCircularBuffer(program, core, cb_src1_config);
 
-
-    // Circular buffer for output tiles
     uint32_t output_cb_index = tt::CBIndex::c_16;
     uint32_t num_output_tiles = 2;
     CircularBufferConfig cb_output_config =
@@ -129,7 +123,7 @@ void matmul_single_core(
     TensorAccessorArgs(*src1_dram_buffer).append_to(reader_compile_time_args);
     auto reader_id = tt_metal::CreateKernel(
         program,
-        OVERRIDE_KERNEL_PREFIX "/home/southbell/tt-example/src/matmul_single_core/kernels/reader_single_core_mm.cpp",
+        OVERRIDE_KERNEL_PREFIX "matmul/matmul_single_core/kernels/dataflow/reader_single_core_mm.cpp",
         core,
         tt_metal::DataMovementConfig{
             .processor = DataMovementProcessor::RISCV_1,
@@ -140,7 +134,7 @@ void matmul_single_core(
     TensorAccessorArgs(*dst_dram_buffer).append_to(writer_compile_time_args);
     auto writer_id = tt_metal::CreateKernel(
         program,
-        OVERRIDE_KERNEL_PREFIX "/home/southbell/tt-example/src/matmul_single_core/kernels/writer_single_core_mm.cpp",
+        OVERRIDE_KERNEL_PREFIX "matmul/matmul_single_core/kernels/dataflow/writer_single_core_mm.cpp",
         core,
         tt_metal::DataMovementConfig{
             .processor = DataMovementProcessor::RISCV_0,
@@ -158,7 +152,7 @@ void matmul_single_core(
     };
     tt_metal::CreateKernel(
         program,
-        OVERRIDE_KERNEL_PREFIX "/home/southbell/tt-example/src/matmul_single_core/kernels/mm.cpp",
+        OVERRIDE_KERNEL_PREFIX "matmul/matmul_single_core/kernels/compute/mm.cpp",
         core,
         tt_metal::ComputeConfig{.math_fidelity = math_fidelity, .compile_args = compute_compile_time_args});
 
@@ -187,67 +181,77 @@ void matmul_single_core(
 int main() {
     bool pass = true;
 
-    // Open device
-    constexpr int device_id = 0;
-    std::shared_ptr<distributed::MeshDevice> mesh_device = distributed::MeshDevice::create_unit_mesh(device_id);
+    try {
+        // Open device
+        constexpr int device_id = 0;
+        std::shared_ptr<distributed::MeshDevice> mesh_device = distributed::MeshDevice::create_unit_mesh(device_id);
 
-    // parameters for the matrix multiplication
-    constexpr uint32_t M = 640;  // matrix A height
-    constexpr uint32_t N = 640;  // matrix B width
-    constexpr uint32_t K = 640;  // shared dimension
+        // parameters for the matrix multiplication
+        constexpr uint32_t M = 640;  // user-defined
+        constexpr uint32_t N = 640;  // user-defined
+        constexpr uint32_t K = 640;  // user-defined
 
-    static_assert(M % TILE_HEIGHT == 0, "M must be divisible by TILE_HEIGHT");
-    static_assert(N % TILE_WIDTH == 0, "N must be divisible by TILE_WIDTH");
-    static_assert(K % TILE_WIDTH == 0, "K must be divisible by TILE_WIDTH");
+        static_assert(M % TILE_HEIGHT == 0, "M must be divisible by TILE_HEIGHT");
+        static_assert(N % TILE_WIDTH == 0, "N must be divisible by TILE_WIDTH");
+        static_assert(K % TILE_WIDTH == 0, "K must be divisible by TILE_WIDTH");
 
-    // input vectors with various ranges of values
-    std::mt19937 rng(std::random_device{}());
-    std::uniform_real_distribution<float> dist(0.f, 1.0f);
-    std::vector<bfloat16> src0_vec(M * K);
-    std::vector<bfloat16> src1_vec(K * N);
+        // input vectors with various ranges of values
+        std::mt19937 rng(std::random_device{}());
+        std::uniform_real_distribution<float> dist(0.f, 1.0f);
+        std::vector<bfloat16> src0_vec(M * K);
+        std::vector<bfloat16> src1_vec(K * N);
 
-    for (bfloat16& v : src0_vec) {
-        v = bfloat16(dist(rng));
+        for (bfloat16& v : src0_vec) {
+            v = bfloat16(dist(rng));
+        }
+        for (bfloat16& v : src1_vec) {
+            v = bfloat16(dist(rng));
+        }
+
+        // Golden Matmul running on CPU so we can compare later
+        std::vector<bfloat16> golden_vec(M * N, 0);
+        golden_matmul(src0_vec, src1_vec, golden_vec, M, N, K);
+
+        // Tilize the input vectors to match the expected tiled layout for the device
+        // The Tenstorrent hardware operates on data in 32x32 tiles rather than standard row-major format.
+        // tilize_nfaces() converts the input matrices from row-major layout to the tiled layout expected by the device.
+        // This transformation groups elements into 32x32 blocks and reorders them in memory so that each tile
+        // (32x32 elements) is stored contiguously. This matches the native data access patterns of the matrix engine
+        // and enables efficient operations on the accelerator.
+        src0_vec = tilize_nfaces(src0_vec, M, K);
+        src1_vec = tilize_nfaces(src1_vec, K, N);
+
+        // Invoke the matrix multiplication on the device
+        std::vector<bfloat16> result_vec(M * N, 0);
+        matmul_single_core(src0_vec, src1_vec, result_vec, false, M, N, K, mesh_device);
+        // Reverse the tilization to get the result in the row-major format that the CPU expects
+        result_vec = untilize_nfaces(result_vec, M, N);
+
+        fmt::print("Output vector of size {}\n", result_vec.size());
+
+        // Calculate the Pearson correlation coefficient (PCC) between the golden vector and the result vector
+        // This is a measure of how similar the two vectors are.
+        // A PCC close to 1 indicates that the two vectors are very similar.
+        float pearson = check_bfloat16_vector_pcc(golden_vec, result_vec);
+        fmt::print("Metalium vs Golden -- PCC = {}\n", pearson);
+        TT_FATAL(pearson > 0.97, "PCC not high enough. Result PCC: {}, Expected PCC: 0.97", pearson);
+
+        pass &= mesh_device->close();
+
+    } catch (const std::exception& e) {
+        fmt::print(stderr, "Test failed with exception!\n");
+        fmt::print(stderr, "{}\n", e.what());
+
+        throw;
     }
-    for (bfloat16& v : src1_vec) {
-        v = bfloat16(dist(rng));
-    }
-
-    // Golden Matmul running on CPU so we can compare later
-    std::vector<bfloat16> golden_vec(M * N, 0);
-    golden_matmul(src0_vec, src1_vec, golden_vec, M, N, K);
-
-    // Tilize the input vectors to match the expected tiled layout for the device
-    // The Tenstorrent hardware operates on data in 32x32 tiles rather than standard row-major format.
-    // tilize_nfaces() converts the input matrices from row-major layout to the tiled layout expected by the device.
-    // This transformation groups elements into 32x32 blocks and reorders them in memory so that each tile
-    // (32x32 elements) is stored contiguously. This matches the native data access patterns of the matrix engine
-    // and enables efficient operations on the accelerator.
-    src0_vec = tilize_nfaces(src0_vec, M, K);
-    src1_vec = tilize_nfaces(src1_vec, K, N);
-
-    std::vector<bfloat16> result_vec(M * N, 0);
-    // Invoke the matrix multiplication on the device
-    matmul_single_core(src0_vec, src1_vec, result_vec, false, M, N, K, mesh_device);
-    // Reverse the tilization to get the result in the row-major format that the CPU expects
-    result_vec = untilize_nfaces(result_vec, M, N);
-
-    fmt::print("Output vector of size {}\n", result_vec.size());
-
-    // Calculate the Pearson correlation coefficient (PCC) between the golden vector and the result vector
-    // This is a measure of how similar the two vectors are.
-    // A PCC close to 1 indicates that the two vectors are very similar.
-    float pearson = check_bfloat16_vector_pcc(golden_vec, result_vec);
-    fmt::print("Metalium vs Golden -- PCC = {}\n", pearson);
-    TT_FATAL(pearson > 0.97, "PCC not high enough. Result PCC: {}, Expected PCC: 0.97", pearson);
-
-    pass &= mesh_device->close();
 
     if (pass) {
-        fmt::print("Test Passed!!!!!\n");
+        fmt::print("Test Passed\n");
     } else {
         TT_THROW("Test Failed");
     }
+
+    TT_ASSERT(pass);
 
     return 0;
 }

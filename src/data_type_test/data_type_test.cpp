@@ -39,9 +39,9 @@ void golden_matmul(
 }
 
 void matmul_single_core(
-    const std::vector<_Float16>& W,
-    const std::vector<_Float16>& a,
-    std::vector<float>& output,
+    const std::vector<uint8_t>& W,
+    const std::vector<uint8_t>& a,
+    std::vector<uint32_t>& output,
     uint32_t N,
     const std::shared_ptr<distributed::MeshDevice>& mesh_device) {
     // Set up mesh command queue, workload, device range, and program. This is a single-core example using core {0,0}.
@@ -56,23 +56,23 @@ void matmul_single_core(
     uint32_t Nt = N / TILE_WIDTH;
 
     // Create DRAM buffers for the input and output data.
-    uint32_t single_tile_size = sizeof(bfloat16) * TILE_HEIGHT * TILE_WIDTH;
+    uint32_t single_tile_size = sizeof(uint8_t) * TILE_HEIGHT * TILE_WIDTH;
 
     distributed::DeviceLocalBufferConfig dram_config{
         .page_size = single_tile_size, .buffer_type = tt_metal::BufferType::DRAM};
 
     distributed::DeviceLocalBufferConfig out_dram_config{
-        .page_size = single_tile_size * 2, .buffer_type = tt_metal::BufferType::DRAM};
+        .page_size = single_tile_size * 4, .buffer_type = tt_metal::BufferType::DRAM};
 
-    distributed::ReplicatedBufferConfig buffer_config_A{.size = sizeof(bfloat16) * W.size()};
-    distributed::ReplicatedBufferConfig buffer_config_B{.size = sizeof(bfloat16) * a.size()};
-    distributed::ReplicatedBufferConfig buffer_config_C{.size = sizeof(float) * output.size()};
+    distributed::ReplicatedBufferConfig buffer_config_A{.size = sizeof(uint8_t) * W.size()};
+    distributed::ReplicatedBufferConfig buffer_config_B{.size = sizeof(uint8_t) * a.size()};
+    distributed::ReplicatedBufferConfig buffer_config_C{.size = sizeof(uint32_t) * output.size()};
 
     auto src0_dram_buffer = distributed::MeshBuffer::create(buffer_config_A, dram_config, mesh_device.get());
     auto src1_dram_buffer = distributed::MeshBuffer::create(buffer_config_B, dram_config, mesh_device.get());
     auto dst_dram_buffer = distributed::MeshBuffer::create(buffer_config_C, out_dram_config, mesh_device.get());
 
-    tt::DataFormat cb_data_format = tt::DataFormat::Float16;
+    tt::DataFormat cb_data_format = tt::DataFormat::UInt8;
     MathFidelity math_fidelity = MathFidelity::HiFi4;
     uint32_t src0_cb_index = CBIndex::c_0;
     uint32_t num_input_tiles = 2;
@@ -96,8 +96,8 @@ void matmul_single_core(
     uint32_t output_cb_index = tt::CBIndex::c_16;
     uint32_t num_output_tiles = 2;
     CircularBufferConfig cb_output_config =
-        CircularBufferConfig(num_output_tiles * single_tile_size * 2, {{output_cb_index, tt::DataFormat::Float32}})
-            .set_page_size(output_cb_index, single_tile_size * 2);
+        CircularBufferConfig(num_output_tiles * single_tile_size * 4, {{output_cb_index, tt::DataFormat::UInt32}})
+            .set_page_size(output_cb_index, single_tile_size * 4);
     tt_metal::CreateCircularBuffer(program, core, cb_output_config);
 
     // Create the data movement kernels and the compute kernel
@@ -171,7 +171,7 @@ int main() {
     // input vectors with various ranges of values
     std::random_device rd;
     std::mt19937 engine(rd());
-    std::uniform_int_distribution<std::uint8_t> dist(0, 10);
+    std::uniform_int_distribution<std::uint8_t> dist(0, 255);
 
     std::vector<uint8_t> W_vec(N * N);
     std::vector<uint8_t> a_vec(N * TILE_WIDTH);
@@ -187,13 +187,13 @@ int main() {
     std::vector<uint32_t> golden_vec(N*N);
     golden_matmul(W_vec, a_vec, golden_vec, N);
 
-    std::vector<_Float16> A_bf(W_vec.size()), B_bf(a_vec.size());
-    for (size_t i = 0; i < W_vec.size(); ++i) A_bf[i] = static_cast<_Float16>(W_vec[i]);   // or apply (x - zp) * scale
-    for (size_t i = 0; i < a_vec.size(); ++i) B_bf[i] = static_cast<_Float16>(a_vec[i]);
+    std::vector<uint8_t> A_bf(W_vec.size()), B_bf(a_vec.size());
+    for (size_t i = 0; i < W_vec.size(); ++i) A_bf[i] = W_vec[i];  
+    for (size_t i = 0; i < a_vec.size(); ++i) B_bf[i] = a_vec[i];
     A_bf = tilize_nfaces(A_bf, N, N);
     B_bf = tilize_nfaces(B_bf, N, TILE_WIDTH);
 
-    std::vector<float> result_vec(N * TILE_WIDTH, 0);
+    std::vector<uint32_t> result_vec(N * TILE_WIDTH, 0);
     matmul_single_core(A_bf, B_bf, result_vec, N, mesh_device);
     result_vec = untilize_nfaces(result_vec, N, TILE_WIDTH);
 
@@ -204,8 +204,8 @@ int main() {
 
     // 검증
     for(int i = 0; i < N * N; i++) {
-        if(golden_vec.at(i) != static_cast<uint32_t>(result_vec.at(i))){
-            fmt::print("golden_vec != result_vec at = {}, golden_vec = {}, result_vec = {}\n", i, golden_vec.at(i), static_cast<uint32_t>(result_vec.at(i)));
+        if(golden_vec.at(i) != result_vec.at(i)){
+            fmt::print("golden_vec != result_vec at = {}, golden_vec = {}, result_vec = {}\n", i, golden_vec.at(i), result_vec.at(i));
         }
     }
 

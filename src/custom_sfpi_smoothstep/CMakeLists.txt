@@ -1,0 +1,2 @@
+add_executable(custom_sfpi_smoothstep ${CMAKE_CURRENT_SOURCE_DIR}/custom_sfpi_smoothstep.cpp)
+target_link_libraries(custom_sfpi_smoothstep PRIVATE TT::Metalium)

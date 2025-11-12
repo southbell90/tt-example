@@ -53,6 +53,8 @@ int main() {
         distributed::MeshBuffer::create(buffer_config, dram_config, mesh_device.get());
     std::shared_ptr<distributed::MeshBuffer> src1_dram_buffer =
         distributed::MeshBuffer::create(buffer_config, dram_config, mesh_device.get());
+    std::shared_ptr<distributed::MeshBuffer> src2_dram_buffer =
+        distributed::MeshBuffer::create(out_buffer_config, out_dram_config, mesh_device.get());
     std::shared_ptr<distributed::MeshBuffer> dst_dram_buffer =
         distributed::MeshBuffer::create(out_buffer_config, out_dram_config, mesh_device.get());
 
@@ -70,16 +72,22 @@ int main() {
             .set_page_size(src1_cb_index, tile_size_bytes);
     tt_metal::CreateCircularBuffer(program, core, cb_src1_config);
 
+    constexpr uint32_t src2_cb_index = tt::CBIndex::c_2;
+    CircularBufferConfig cb_src2_config =
+        CircularBufferConfig(num_input_tiles * tile_size_bytes, {{src2_cb_index, tt::DataFormat::UInt8}})
+            .set_page_size(src2_cb_index, tile_size_bytes);
+    tt_metal::CreateCircularBuffer(program, core, cb_src2_config);
+
     constexpr uint32_t output_cb_index = tt::CBIndex::c_16;
     CircularBufferConfig cb_output_config =
         CircularBufferConfig(num_input_tiles * out_tile_size_bytes, {{output_cb_index, tt::DataFormat::UInt32}})
             .set_page_size(output_cb_index, out_tile_size_bytes);
     tt_metal::CreateCircularBuffer(program, core, cb_output_config);
 
-    // Create the 2 data movement kernels and the compute kernel.
     std::vector<uint32_t> reader_compile_time_args;
     TensorAccessorArgs(*src0_dram_buffer).append_to(reader_compile_time_args);
     TensorAccessorArgs(*src1_dram_buffer).append_to(reader_compile_time_args);
+    TensorAccessorArgs(*src2_dram_buffer).append_to(reader_compile_time_args);
     KernelHandle reader_id = CreateKernel(
         program,
         "/home/southbell/tt-example/src/data_type_sfpu/kernels/reader.cpp",
@@ -125,7 +133,14 @@ int main() {
         v = dist(engine);
     }
 
-    std::vector<uint32_t> golden(elements_per_tile * n_tiles, 0);
+    std::uniform_int_distribution<std::uint8_t> dist2(0, 255);
+    std::vector<uint8_t> src2_vec(elements_per_tile * n_tiles);
+
+    for(uint8_t& v : src2_vec) {
+        v = dist2(engine);
+    }
+
+    std::vector<uint64_t> golden(elements_per_tile * n_tiles, 0);
 
     for(int i = 0; i < TILE_WIDTH; i++) {
         for(int j = 0; j < TILE_HEIGHT; j++) {
@@ -136,11 +151,12 @@ int main() {
     }
 
     for(int i = 0; i < elements_per_tile * n_tiles; i++) {
-        golden.at(i) *= src1_vec.at(i);
+        golden.at(i) *= src2_vec.at(i);
     }
 
     src0_vec = tilize_nfaces(src0_vec, TILE_HEIGHT, TILE_WIDTH);
     src1_vec = tilize_nfaces(src1_vec, TILE_HEIGHT, TILE_WIDTH);
+    src2_vec = tilize_nfaces(src2_vec, TILE_HEIGHT, TILE_WIDTH);
 
     // Set up the runtime arguments for the kernels.
     SetRuntimeArgs(program, compute_id, core, {n_tiles});
@@ -151,13 +167,15 @@ int main() {
         {
             src0_dram_buffer->address(),
             src1_dram_buffer->address(),
-            n_tiles,
+            src2_dram_buffer->address(),
+            n_tiles
         });
 
     SetRuntimeArgs(program, writer_id, core, {dst_dram_buffer->address(), n_tiles});
 
     distributed::EnqueueWriteMeshBuffer(cq, src0_dram_buffer, src0_vec, /*blocking=*/false);
     distributed::EnqueueWriteMeshBuffer(cq, src1_dram_buffer, src1_vec, /*blocking=*/false);
+    distributed::EnqueueWriteMeshBuffer(cq, src2_dram_buffer, src2_vec, /*blocking=*/false);
     workload.add_program(device_range, std::move(program));
     distributed::EnqueueMeshWorkload(cq, workload, false);
     distributed::Finish(cq);
@@ -171,11 +189,8 @@ int main() {
     // src1_vec = untilize_nfaces(src1_vec, TILE_HEIGHT, TILE_WIDTH);
 
     // 검증
-
-
     for(int i = 0; i < elements_per_tile * n_tiles; i++) {
         if(golden.at(i) != result_vec.at(i)) {
-            fmt::print("src0 = {} , src1 = {}\n", src0_vec.at(i), src1_vec.at(i));
             fmt::print("golden and result unmatch at {}, golden = {}, result = {}\n", i, golden.at(i), result_vec.at(i));
             // pass = false;
             break;

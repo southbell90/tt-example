@@ -44,6 +44,7 @@ int main() {
         .page_size = tile_size_bytes, .buffer_type = tt_metal::BufferType::DRAM};
     distributed::DeviceLocalBufferConfig out_dram_config{
         .page_size = out_tile_size_bytes, .buffer_type = tt_metal::BufferType::DRAM};
+        
     distributed::ReplicatedBufferConfig buffer_config{
         .size = tile_size_bytes * n_tiles}; 
     distributed::ReplicatedBufferConfig out_buffer_config{

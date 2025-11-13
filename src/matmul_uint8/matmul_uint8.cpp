@@ -36,13 +36,19 @@ int main() {
 
     constexpr uint32_t n_tiles = 1;
     constexpr uint32_t elements_per_tile = tt::constants::TILE_WIDTH * tt::constants::TILE_HEIGHT;
-    constexpr uint32_t tile_size_bytes = sizeof(uint32_t) * elements_per_tile;
+    constexpr uint32_t tile_size_bytes = sizeof(uint8_t) * elements_per_tile;
+    constexpr uint32_t out_tile_size_bytes = sizeof(uint32_t) * elements_per_tile;
 
     // Allocate DRAM buffers for the input and output data.
     distributed::DeviceLocalBufferConfig dram_config{
         .page_size = tile_size_bytes, .buffer_type = tt_metal::BufferType::DRAM};
+    distributed::DeviceLocalBufferConfig out_dram_config{
+        .page_size = out_tile_size_bytes, .buffer_type = tt_metal::BufferType::DRAM};
+
     distributed::ReplicatedBufferConfig buffer_config{
         .size = tile_size_bytes * n_tiles}; 
+    distributed::ReplicatedBufferConfig out_buffer_config{
+        .size = out_tile_size_bytes * n_tiles}; 
 
     std::shared_ptr<distributed::MeshBuffer> src0_dram_buffer =
         distributed::MeshBuffer::create(buffer_config, dram_config, mesh_device.get());
@@ -51,26 +57,26 @@ int main() {
         distributed::MeshBuffer::create(buffer_config, dram_config, mesh_device.get());
 
     std::shared_ptr<distributed::MeshBuffer> dst_dram_buffer =
-        distributed::MeshBuffer::create(buffer_config, dram_config, mesh_device.get());
+        distributed::MeshBuffer::create(out_buffer_config, out_dram_config, mesh_device.get());
 
     // Allocate 2 circular buffers for input and output.
     constexpr uint32_t src0_cb_index = tt::CBIndex::c_0;
     constexpr uint32_t num_input_tiles = 2;
     CircularBufferConfig cb_src0_config =
-        CircularBufferConfig(num_input_tiles * tile_size_bytes, {{src0_cb_index, tt::DataFormat::UInt32}})
+        CircularBufferConfig(num_input_tiles * tile_size_bytes, {{src0_cb_index, tt::DataFormat::UInt8}})
             .set_page_size(src0_cb_index, tile_size_bytes);
     tt_metal::CreateCircularBuffer(program, core, cb_src0_config);
 
     constexpr uint32_t src1_cb_index = tt::CBIndex::c_1;
     CircularBufferConfig cb_src1_config =
-        CircularBufferConfig(num_input_tiles * tile_size_bytes, {{src1_cb_index, tt::DataFormat::UInt32}})
+        CircularBufferConfig(num_input_tiles * tile_size_bytes, {{src1_cb_index, tt::DataFormat::UInt8}})
             .set_page_size(src1_cb_index, tile_size_bytes);
     tt_metal::CreateCircularBuffer(program, core, cb_src1_config);
 
     constexpr uint32_t output_cb_index = tt::CBIndex::c_16;
     CircularBufferConfig cb_output_config =
-        CircularBufferConfig(num_input_tiles * tile_size_bytes, {{output_cb_index, tt::DataFormat::UInt32}})
-            .set_page_size(output_cb_index, tile_size_bytes);
+        CircularBufferConfig(num_input_tiles * out_tile_size_bytes, {{output_cb_index, tt::DataFormat::UInt32}})
+            .set_page_size(output_cb_index, out_tile_size_bytes);
     tt_metal::CreateCircularBuffer(program, core, cb_output_config);
 
     std::vector<uint32_t> reader_compile_time_args;
@@ -78,7 +84,7 @@ int main() {
     TensorAccessorArgs(*src1_dram_buffer).append_to(reader_compile_time_args);
     KernelHandle reader_id = CreateKernel(
         program,
-        "/home/southbell/tt-example/src/sfpu_uint32_mul/kernels/reader.cpp",
+        "/home/southbell/tt-example/src/matmul_uint8/kernels/reader.cpp",
         core,
         DataMovementConfig{
             .processor = DataMovementProcessor::RISCV_1,
@@ -89,7 +95,7 @@ int main() {
     TensorAccessorArgs(*dst_dram_buffer).append_to(writer_compile_time_args);
     KernelHandle writer_id = CreateKernel(
         program,
-        "/home/southbell/tt-example/src/sfpu_uint32_mul/kernels/writer.cpp",
+        "/home/southbell/tt-example/src/matmul_uint8/kernels/writer.cpp",
         core,
         DataMovementConfig{
             .processor = DataMovementProcessor::RISCV_0,
@@ -98,7 +104,7 @@ int main() {
 
     KernelHandle compute_id = CreateKernel(
         program,
-        "/home/southbell/tt-example/src/sfpu_uint32_mul/kernels/compute.cpp",
+        "/home/southbell/tt-example/src/matmul_uint8/kernels/compute.cpp",
         core,
         ComputeConfig{
             .math_fidelity = MathFidelity::HiFi4,
@@ -109,22 +115,29 @@ int main() {
     // Initialize the input data with random values and use as the input to the kernel.
     std::random_device rd;
     std::mt19937 engine(rd());
-    std::uniform_int_distribution<std::uint32_t> dist(0, 65500);
+    std::uniform_int_distribution<std::uint8_t> dist(0, 250);
 
-    std::vector<uint32_t> src0_vec(elements_per_tile * n_tiles);
-    std::vector<uint32_t> src1_vec(elements_per_tile * n_tiles);
+    std::vector<uint8_t> src0_vec(elements_per_tile * n_tiles);
+    std::vector<uint8_t> src1_vec(elements_per_tile * n_tiles);
     
-    for (uint32_t& v : src0_vec) {
+    for (uint8_t& v : src0_vec) {
         v = dist(engine);
     }
-    for (uint32_t& v : src1_vec) {
+    for (uint8_t& v : src1_vec) {
         v = dist(engine);
     }
 
+
+    // 16-bit으로하면 overflow가 나서 FPU의 결과 result_vec과 일치하지 않는다.
+    // 즉 FPU matmul의 결과는 32-bit로 나온다는 것과 같다.
     std::vector<uint32_t> golden(elements_per_tile * n_tiles, 0);
 
-    for(int i = 0; i < elements_per_tile * n_tiles; i++) {
-        golden.at(i) = src0_vec.at(i) * src1_vec.at(i);
+    for(int i = 0; i < TILE_WIDTH; i++) {
+        for(int j = 0; j < TILE_HEIGHT; j++) {
+            for(int k = 0; k < TILE_HEIGHT; k++) {
+                golden.at(i * TILE_WIDTH + j) += src0_vec.at(i * TILE_WIDTH + k) * src1_vec.at(j + TILE_WIDTH * k);
+            }
+        }
     }
 
     src0_vec = tilize_nfaces(src0_vec, TILE_HEIGHT, TILE_WIDTH);
@@ -169,7 +182,7 @@ int main() {
     pass &= mesh_device->close();
 
     if (pass) {
-        fmt::print("Test Passed!! ---- sfpu_uint32_mul\n");
+        fmt::print("Test Passed!! ---- matmul_uint8\n");
     } else {
         TT_THROW("Test Failed!!");
     }

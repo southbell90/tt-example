@@ -56,7 +56,7 @@ int main() {
         distributed::MeshBuffer::create(buffer_config, dram_config, mesh_device.get());
 
     std::shared_ptr<distributed::MeshBuffer> src2_dram_buffer =
-        distributed::MeshBuffer::create(buffer_config, dram_config, mesh_device.get());
+        distributed::MeshBuffer::create(out_buffer_config, out_dram_config, mesh_device.get());
 
     std::shared_ptr<distributed::MeshBuffer> dst_dram_buffer =
         distributed::MeshBuffer::create(out_buffer_config, out_dram_config, mesh_device.get());
@@ -124,7 +124,7 @@ int main() {
     // Initialize the input data with random values and use as the input to the kernel.
     std::random_device rd;
     std::mt19937 engine(rd());
-    std::uniform_int_distribution<std::uint8_t> dist(0, 255);
+    std::uniform_int_distribution<std::uint8_t> dist(0, 250);
 
     std::vector<uint8_t> src0_vec(elements_per_tile * n_tiles);
     std::vector<uint8_t> src1_vec(elements_per_tile * n_tiles);
@@ -136,7 +136,7 @@ int main() {
         v = dist(engine);
     }
 
-    std::uniform_int_distribution<std::uint32_t> dist2(0, 255);
+    std::uniform_int_distribution<std::uint32_t> dist2(0, 250);
     std::vector<uint32_t> src2_vec(elements_per_tile * n_tiles);
 
     for(uint32_t& v : src2_vec) {

@@ -16,7 +16,6 @@ void MAIN {
 
     tt::CBIndex cb_in0 = tt::CBIndex::c_0;
     tt::CBIndex cb_in1 = tt::CBIndex::c_1;
-    tt::CBIndex cb_in2 = tt::CBIndex::c_2;
     tt::CBIndex cb_out = tt::CBIndex::c_16;
 
 
@@ -24,15 +23,12 @@ void MAIN {
 
     cb_wait_front(cb_in0, 1);
     cb_wait_front(cb_in1, 1);
-    cb_wait_front(cb_in2, 1);
 
-    // cb2에 있는 데이터는 dst register 1에 저장
-    copy_tile_init(cb_in2);
-    copy_tile(cb_in2, 0, 1);
+    copy_tile_init(cb_in0);
+    copy_tile(cb_in0, 0, 0);
+    copy_tile_init(cb_in1);
+    copy_tile(cb_in1, 0, 1);
 
-    // 타일의 곱은 dst register 0에 저장
-    mm_init(cb_in0, cb_in1, cb_out);
-    matmul_tiles(cb_in0, cb_in1, 0, 0, 0, false);
 
     init_sfpu(cb_in0, cb_out);
 
@@ -48,7 +44,6 @@ void MAIN {
     // We don't need the input tile anymore, mark it as consumed
     cb_pop_front(cb_in0, 1);
     cb_pop_front(cb_in1, 1);
-    cb_pop_front(cb_in2, 1);
 
     // Mark the tile as ready for the writer kernel to write to DRAM
     cb_push_back(cb_out, 1);

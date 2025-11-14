@@ -7,28 +7,71 @@
 #include "compute_kernel_api/eltwise_unary/eltwise_unary.h"
 #include "compute_kernel_api.h"
 #include "compute_kernel_api/eltwise_unary/remainder.h"
+#include "compute_kernel_api/mul_int32_sfpu.h"
+#include "compute_kernel_api/mul_int_sfpu.h"
+#include "compute_kernel_api/eltwise_unary/right_shift.h"
+#include "compute_kernel_api/sub_int_sfpu.h"
 
+
+#ifdef TRISC_MATH
+inline void my_remainder_tile_face(uint32_t q) {
+    constexpr size_t vectors_per_face = 8;
+
+    for (size_t i = 0; i < vectors_per_face; i++) {
+        vUInt x = dst_reg[i];
+        v_if(x >= q) { x -= q ;}
+        v_endif;
+        dst_reg[i] = x;
+    }
+}
+#endif
+
+
+inline void my_remainder_tile(uint32_t idx_dst0, uint32_t q) {
+    MATH(_llk_math_eltwise_unary_sfpu_params_<false>(
+        my_remainder_tile_face, idx_dst0, VectorMode::RC, q));
+}
 
 namespace NAMESPACE {
 void MAIN {
     uint32_t n_tiles = get_arg_val<uint32_t>(0);
-    uint32_t q_bits = get_arg_val<uint32_t>(1);
-    uint32_t q_rcp_bits = get_arg_val<uint32_t>(2);
+    uint32_t q = get_arg_val<uint32_t>(1);
 
     tt::CBIndex cb_in0 = tt::CBIndex::c_0;
+    tt::CBIndex cb_in1 = tt::CBIndex::c_1;
+    tt::CBIndex cb_in2 = tt::CBIndex::c_2;
     tt::CBIndex cb_out = tt::CBIndex::c_16;
 
     tile_regs_acquire();
+    cb_wait_front(cb_in0, 1);
+    cb_wait_front(cb_in1, 1);
+    cb_wait_front(cb_in2, 1);
 
     init_sfpu(cb_in0, cb_out);
+    init_sfpu(cb_in1, cb_out);
+    init_sfpu(cb_in2, cb_out);
 
-    cb_wait_front(cb_in0, 1);
-
+    // dst register 0 에는 a, 1에는 mu, 2에는 q
     copy_tile_init(cb_in0);
     copy_tile(cb_in0, 0, 0);
+    copy_tile_init(cb_in1);
+    copy_tile(cb_in1, 0, 1);
+    copy_tile_init(cb_in2);
+    copy_tile(cb_in2, 0, 2);
+    
+    mul_int32_tile_init();
+    mul_uint32_tile(0,1,3);
 
-    // remainder_tile_init(q_bits, q_rcp_bits);
-    remainder_tile(0, q_bits, q_rcp_bits);
+    right_shift_tile_init();
+    right_shift_tile(3, 32);
+
+    mul_int32_tile_init();
+    mul_uint32_tile(2, 3, 3);   // t * q
+
+    sub_int_tile_init();
+    sub_uint32_tile(0,3,0);
+
+    my_remainder_tile(0, q);
 
     tile_regs_commit();
     tile_regs_wait();

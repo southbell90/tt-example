@@ -47,9 +47,6 @@ int main() {
     std::shared_ptr<distributed::MeshBuffer> src0_dram_buffer =
         distributed::MeshBuffer::create(buffer_config, dram_config, mesh_device.get());
 
-    std::shared_ptr<distributed::MeshBuffer> src1_dram_buffer =
-        distributed::MeshBuffer::create(buffer_config, dram_config, mesh_device.get());
-
     std::shared_ptr<distributed::MeshBuffer> dst_dram_buffer =
         distributed::MeshBuffer::create(buffer_config, dram_config, mesh_device.get());
 
@@ -61,12 +58,6 @@ int main() {
             .set_page_size(src0_cb_index, tile_size_bytes);
     tt_metal::CreateCircularBuffer(program, core, cb_src0_config);
 
-    constexpr uint32_t src1_cb_index = tt::CBIndex::c_1;
-    CircularBufferConfig cb_src1_config =
-        CircularBufferConfig(num_input_tiles * tile_size_bytes, {{src1_cb_index, tt::DataFormat::UInt32}})
-            .set_page_size(src1_cb_index, tile_size_bytes);
-    tt_metal::CreateCircularBuffer(program, core, cb_src1_config);
-
     constexpr uint32_t output_cb_index = tt::CBIndex::c_16;
     CircularBufferConfig cb_output_config =
         CircularBufferConfig(num_input_tiles * tile_size_bytes, {{output_cb_index, tt::DataFormat::UInt32}})
@@ -75,10 +66,9 @@ int main() {
 
     std::vector<uint32_t> reader_compile_time_args;
     TensorAccessorArgs(*src0_dram_buffer).append_to(reader_compile_time_args);
-    TensorAccessorArgs(*src1_dram_buffer).append_to(reader_compile_time_args);
     KernelHandle reader_id = CreateKernel(
         program,
-        "/home/southbell/tt-example/src/sfpu_uint32_mul/kernels/reader.cpp",
+        "/home/southbell/tt-example/src/sfpu_remainder/kernels/reader.cpp",
         core,
         DataMovementConfig{
             .processor = DataMovementProcessor::RISCV_1,
@@ -89,7 +79,7 @@ int main() {
     TensorAccessorArgs(*dst_dram_buffer).append_to(writer_compile_time_args);
     KernelHandle writer_id = CreateKernel(
         program,
-        "/home/southbell/tt-example/src/sfpu_uint32_mul/kernels/writer.cpp",
+        "/home/southbell/tt-example/src/sfpu_remainder/kernels/writer.cpp",
         core,
         DataMovementConfig{
             .processor = DataMovementProcessor::RISCV_0,
@@ -98,55 +88,50 @@ int main() {
 
     KernelHandle compute_id = CreateKernel(
         program,
-        "/home/southbell/tt-example/src/sfpu_uint32_mul/kernels/compute.cpp",
+        "/home/southbell/tt-example/src/sfpu_remainder/kernels/compute.cpp",
         core,
         ComputeConfig{
             .math_fidelity = MathFidelity::HiFi4,
-            .fp32_dest_acc_en = false,
-            .dst_full_sync_en = false,
             .math_approx_mode = false,
         });
 
     // Initialize the input data with random values and use as the input to the kernel.
     std::random_device rd;
     std::mt19937 engine(rd());
-    std::uniform_int_distribution<std::uint32_t> dist(0, 65500);
+    std::uniform_int_distribution<std::uint32_t> dist(0, 4294900000);
 
     std::vector<uint32_t> src0_vec(elements_per_tile * n_tiles);
-    std::vector<uint32_t> src1_vec(elements_per_tile * n_tiles);
     
     for (uint32_t& v : src0_vec) {
-        v = dist(engine);
-    }
-    for (uint32_t& v : src1_vec) {
         v = dist(engine);
     }
 
     std::vector<uint32_t> golden(elements_per_tile * n_tiles, 0);
 
+    uint32_t q = 8650753;
+    uint32_t q_bits = std::bit_cast<uint32_t>(float(q));
+    uint32_t q_rcp_bits = std::bit_cast<uint32_t>(1.0f / float(q));
+
     for(int i = 0; i < elements_per_tile * n_tiles; i++) {
-        golden.at(i) = src0_vec.at(i) * src1_vec.at(i);
+        golden.at(i) = src0_vec.at(i) % q;
     }
 
     src0_vec = tilize_nfaces(src0_vec, TILE_HEIGHT, TILE_WIDTH);
-    src1_vec = tilize_nfaces(src1_vec, TILE_HEIGHT, TILE_WIDTH);
 
     // Set up the runtime arguments for the kernels.
-    SetRuntimeArgs(program, compute_id, core, {n_tiles});
+    SetRuntimeArgs(program, compute_id, core, {n_tiles, q_bits, q_rcp_bits});
     SetRuntimeArgs(
         program,
         reader_id,
         core,
         {
             src0_dram_buffer->address(),
-            src1_dram_buffer->address(),
             n_tiles
         });
 
     SetRuntimeArgs(program, writer_id, core, {dst_dram_buffer->address(), n_tiles});
 
     distributed::EnqueueWriteMeshBuffer(cq, src0_dram_buffer, src0_vec, /*blocking=*/false);
-    distributed::EnqueueWriteMeshBuffer(cq, src1_dram_buffer, src1_vec, /*blocking=*/false);
     workload.add_program(device_range, std::move(program));
     distributed::EnqueueMeshWorkload(cq, workload, false);
     distributed::Finish(cq);
@@ -170,7 +155,7 @@ int main() {
     pass &= mesh_device->close();
 
     if (pass) {
-        fmt::print("Test Passed!! ---- sfpu_uint32_mul\n");
+        fmt::print("Test Passed!! ---- sfpu_remainder\n");
     } else {
         TT_THROW("Test Failed!!");
     }

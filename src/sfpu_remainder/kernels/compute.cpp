@@ -63,7 +63,8 @@ void MAIN {
     mul_uint32_tile(0,1,3);     // 3번 레지스터에 a * mu
 
     right_shift_tile_init();
-    right_shift_tile(3, 32);    // 3번 레지스터에 t = a * mu >> 32 
+    right_shift_tile(3, 16);    // 3번 레지스터에 t = a * mu >> 32 
+    right_shift_tile(3, 16);
 
     mul_int32_tile_init();
     mul_uint32_tile(2, 3, 3);   // 3번 레지스터에 t * q

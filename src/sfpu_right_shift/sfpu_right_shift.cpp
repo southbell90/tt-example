@@ -20,17 +20,6 @@ using namespace tt::tt_metal;
 #define OVERRIDE_KERNEL_PREFIX ""
 #endif
 
-uint32_t umulhi(uint32_t a, uint32_t b) {
-    return (uint32_t)(((uint64_t)a * (uint64_t)b) >> 32);
-}
-
-uint32_t u32_mod_const(uint32_t a, uint32_t q, uint32_t mu) {
-    uint32_t t = umulhi(a, mu);
-    uint32_t r = a - t * q;
-    if (r >= q) r -= q;
-    return r;
-}
-
 int main() {
     bool pass = true;
 
@@ -58,12 +47,6 @@ int main() {
     std::shared_ptr<distributed::MeshBuffer> src0_dram_buffer =
         distributed::MeshBuffer::create(buffer_config, dram_config, mesh_device.get());
 
-    std::shared_ptr<distributed::MeshBuffer> src1_dram_buffer =
-        distributed::MeshBuffer::create(buffer_config, dram_config, mesh_device.get());
-
-    std::shared_ptr<distributed::MeshBuffer> src2_dram_buffer =
-        distributed::MeshBuffer::create(buffer_config, dram_config, mesh_device.get());
-
     std::shared_ptr<distributed::MeshBuffer> dst_dram_buffer =
         distributed::MeshBuffer::create(buffer_config, dram_config, mesh_device.get());
 
@@ -75,18 +58,6 @@ int main() {
             .set_page_size(src0_cb_index, tile_size_bytes);
     tt_metal::CreateCircularBuffer(program, core, cb_src0_config);
 
-    constexpr uint32_t src1_cb_index = tt::CBIndex::c_1;
-    CircularBufferConfig cb_src1_config =
-        CircularBufferConfig(num_input_tiles * tile_size_bytes, {{src1_cb_index, tt::DataFormat::UInt32}})
-            .set_page_size(src1_cb_index, tile_size_bytes);
-    tt_metal::CreateCircularBuffer(program, core, cb_src1_config);
-
-    constexpr uint32_t src2_cb_index = tt::CBIndex::c_2;
-    CircularBufferConfig cb_src2_config =
-        CircularBufferConfig(num_input_tiles * tile_size_bytes, {{src2_cb_index, tt::DataFormat::UInt32}})
-            .set_page_size(src2_cb_index, tile_size_bytes);
-    tt_metal::CreateCircularBuffer(program, core, cb_src2_config);
-
     constexpr uint32_t output_cb_index = tt::CBIndex::c_16;
     CircularBufferConfig cb_output_config =
         CircularBufferConfig(num_input_tiles * tile_size_bytes, {{output_cb_index, tt::DataFormat::UInt32}})
@@ -95,11 +66,10 @@ int main() {
 
     std::vector<uint32_t> reader_compile_time_args;
     TensorAccessorArgs(*src0_dram_buffer).append_to(reader_compile_time_args);
-    TensorAccessorArgs(*src1_dram_buffer).append_to(reader_compile_time_args);
-    TensorAccessorArgs(*src2_dram_buffer).append_to(reader_compile_time_args);
+
     KernelHandle reader_id = CreateKernel(
         program,
-        "/home/southbell/tt-example/src/sfpu_remainder/kernels/reader.cpp",
+        "/home/southbell/tt-example/src/sfpu_right_shift/kernels/reader.cpp",
         core,
         DataMovementConfig{
             .processor = DataMovementProcessor::RISCV_1,
@@ -110,7 +80,7 @@ int main() {
     TensorAccessorArgs(*dst_dram_buffer).append_to(writer_compile_time_args);
     KernelHandle writer_id = CreateKernel(
         program,
-        "/home/southbell/tt-example/src/sfpu_remainder/kernels/writer.cpp",
+        "/home/southbell/tt-example/src/sfpu_right_shift/kernels/writer.cpp",
         core,
         DataMovementConfig{
             .processor = DataMovementProcessor::RISCV_0,
@@ -119,7 +89,7 @@ int main() {
 
     KernelHandle compute_id = CreateKernel(
         program,
-        "/home/southbell/tt-example/src/sfpu_remainder/kernels/compute.cpp",
+        "/home/southbell/tt-example/src/sfpu_right_shift/kernels/compute.cpp",
         core,
         ComputeConfig{
             .math_fidelity = MathFidelity::HiFi4,
@@ -127,56 +97,38 @@ int main() {
         });
 
 
-    uint32_t q = 8650753;
-    uint32_t mu = 496;  // uint32_t mu = (uint32_t)((1ull << 32) / q); 결과 값 바로 저장
     // Initialize the input data with random values and use as the input to the kernel.
     std::random_device rd;
     std::mt19937 engine(rd());
-    std::uniform_int_distribution<std::uint32_t> dist(0, 65530);
+    std::uniform_int_distribution<std::uint32_t> dist(0, 1294900000);
 
     std::vector<uint32_t> src0_vec(elements_per_tile * n_tiles, 0);
     for (uint32_t& v : src0_vec) {
         v = dist(engine);
     }
 
-    std::vector<uint32_t> src1_vec(elements_per_tile * n_tiles, mu);
-
-    std::vector<uint32_t> src2_vec(elements_per_tile * n_tiles, q);
-
 
     std::vector<uint32_t> golden(elements_per_tile * n_tiles, 0);
     for(int i = 0; i < elements_per_tile * n_tiles; i++) {
-        golden.at(i) = src0_vec.at(i) % q;
+        golden.at(i) = src0_vec.at(i) >> 16;
     }
-
-    std::vector<uint32_t> barret(elements_per_tile * n_tiles, 0);
-    for(int i = 0; i < elements_per_tile * n_tiles; i++) {
-        barret.at(i) = u32_mod_const(src0_vec.at(i), q, mu);
-    }
-
 
     src0_vec = tilize_nfaces(src0_vec, TILE_HEIGHT, TILE_WIDTH);
-    src1_vec = tilize_nfaces(src1_vec, TILE_HEIGHT, TILE_WIDTH);
-    src2_vec = tilize_nfaces(src2_vec, TILE_HEIGHT, TILE_WIDTH);
 
     // Set up the runtime arguments for the kernels.
-    SetRuntimeArgs(program, compute_id, core, {n_tiles, q});
+    SetRuntimeArgs(program, compute_id, core, {n_tiles});
     SetRuntimeArgs(
         program,
         reader_id,
         core,
         {
             src0_dram_buffer->address(),
-            src1_dram_buffer->address(),
-            src2_dram_buffer->address(),
             n_tiles
         });
 
     SetRuntimeArgs(program, writer_id, core, {dst_dram_buffer->address(), n_tiles});
 
     distributed::EnqueueWriteMeshBuffer(cq, src0_dram_buffer, src0_vec, /*blocking=*/false);
-    distributed::EnqueueWriteMeshBuffer(cq, src1_dram_buffer, src1_vec, /*blocking=*/false);
-    distributed::EnqueueWriteMeshBuffer(cq, src2_dram_buffer, src2_vec, /*blocking=*/false);
     workload.add_program(device_range, std::move(program));
     distributed::EnqueueMeshWorkload(cq, workload, false);
     distributed::Finish(cq);
@@ -189,22 +141,12 @@ int main() {
 
     // 검증
     for(int i = 0; i < elements_per_tile * n_tiles; i++) {
-        if(golden.at(i) != barret.at(i)) {
-            fmt::print("golden and barret unmatch at {}, golden = {}, barret = {}\n", i, golden.at(i), barret.at(i));
-            // pass = false;
-            break;
-        }
-    }
-
-    for(int i = 0; i < elements_per_tile * n_tiles; i++) {
         if(golden.at(i) != result_vec.at(i)) {
             fmt::print("golden and result unmatch at {}, golden = {}, result = {}\n", i, golden.at(i), result_vec.at(i));
             // pass = false;
             break;
         }
     }
-
-
 
     // Finally, close the device.
     pass &= mesh_device->close();

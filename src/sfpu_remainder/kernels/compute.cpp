@@ -11,6 +11,7 @@
 #include "compute_kernel_api/mul_int_sfpu.h"
 #include "compute_kernel_api/eltwise_unary/right_shift.h"
 #include "compute_kernel_api/sub_int_sfpu.h"
+#include "compute_kernel_api/binary_shift.h"
 
 
 #ifdef TRISC_MATH
@@ -40,31 +41,35 @@ void MAIN {
     tt::CBIndex cb_in0 = tt::CBIndex::c_0;
     tt::CBIndex cb_in1 = tt::CBIndex::c_1;
     tt::CBIndex cb_in2 = tt::CBIndex::c_2;
+    tt::CBIndex cb_in3 = tt::CBIndex::c_3;
     tt::CBIndex cb_out = tt::CBIndex::c_16;
 
     tile_regs_acquire();
     cb_wait_front(cb_in0, 1);
     cb_wait_front(cb_in1, 1);
     cb_wait_front(cb_in2, 1);
+    cb_wait_front(cb_in3, 1);
 
     init_sfpu(cb_in0, cb_out);
     init_sfpu(cb_in1, cb_out);
     init_sfpu(cb_in2, cb_out);
+    init_sfpu(cb_in3, cb_out);
 
-    // dst register 0 에는 a, 1에는 mu, 2에는 q
+    // dst register 0 에는 a, 1에는 mu, 2에는 q, 4에는 shift amount 32
     copy_tile_init(cb_in0);
     copy_tile(cb_in0, 0, 0);
     copy_tile_init(cb_in1);
     copy_tile(cb_in1, 0, 1);
     copy_tile_init(cb_in2);
     copy_tile(cb_in2, 0, 2);
+    copy_tile_init(cb_in3);
+    copy_tile(cb_in3, 0, 4);
     
     mul_int32_tile_init();
     mul_uint32_tile(0,1,3);     // 3번 레지스터에 a * mu
 
-    right_shift_tile_init();
-    right_shift_tile(3, 16);    // 3번 레지스터에 t = a * mu >> 32 
-    right_shift_tile(3, 16);
+    binary_shift_tile_init();   
+    binary_logical_right_shift_uint32_tile(3, 4, 3);    // a * mu >> 32 
 
     mul_int32_tile_init();
     mul_uint32_tile(2, 3, 3);   // 3번 레지스터에 t * q

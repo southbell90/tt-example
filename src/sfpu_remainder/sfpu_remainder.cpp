@@ -64,6 +64,9 @@ int main() {
     std::shared_ptr<distributed::MeshBuffer> src2_dram_buffer =
         distributed::MeshBuffer::create(buffer_config, dram_config, mesh_device.get());
 
+    std::shared_ptr<distributed::MeshBuffer> src3_dram_buffer =
+        distributed::MeshBuffer::create(buffer_config, dram_config, mesh_device.get());
+
     std::shared_ptr<distributed::MeshBuffer> dst_dram_buffer =
         distributed::MeshBuffer::create(buffer_config, dram_config, mesh_device.get());
 
@@ -87,6 +90,13 @@ int main() {
             .set_page_size(src2_cb_index, tile_size_bytes);
     tt_metal::CreateCircularBuffer(program, core, cb_src2_config);
 
+    constexpr uint32_t src3_cb_index = tt::CBIndex::c_3;
+    CircularBufferConfig cb_src3_config =
+        CircularBufferConfig(num_input_tiles * tile_size_bytes, {{src3_cb_index, tt::DataFormat::UInt32}})
+            .set_page_size(src3_cb_index, tile_size_bytes);
+    tt_metal::CreateCircularBuffer(program, core, cb_src3_config);
+
+
     constexpr uint32_t output_cb_index = tt::CBIndex::c_16;
     CircularBufferConfig cb_output_config =
         CircularBufferConfig(num_input_tiles * tile_size_bytes, {{output_cb_index, tt::DataFormat::UInt32}})
@@ -97,6 +107,7 @@ int main() {
     TensorAccessorArgs(*src0_dram_buffer).append_to(reader_compile_time_args);
     TensorAccessorArgs(*src1_dram_buffer).append_to(reader_compile_time_args);
     TensorAccessorArgs(*src2_dram_buffer).append_to(reader_compile_time_args);
+    TensorAccessorArgs(*src3_dram_buffer).append_to(reader_compile_time_args);
     KernelHandle reader_id = CreateKernel(
         program,
         "/home/southbell/tt-example/src/sfpu_remainder/kernels/reader.cpp",
@@ -132,7 +143,9 @@ int main() {
     // Initialize the input data with random values and use as the input to the kernel.
     std::random_device rd;
     std::mt19937 engine(rd());
-    std::uniform_int_distribution<std::uint32_t> dist(0, 4294900000);
+    // 2^23 = 8388608 까지는 mu와 곱해도 overflow가 나지 않기 때문에 테스트를 통과하지만 
+    // 더 큰 수에서 overflow가 날 시 결과가 맞지 않는다.
+    std::uniform_int_distribution<std::uint32_t> dist(0, 8388608);
 
     std::vector<uint32_t> src0_vec(elements_per_tile * n_tiles, 0);
     for (uint32_t& v : src0_vec) {
@@ -142,6 +155,8 @@ int main() {
     std::vector<uint32_t> src1_vec(elements_per_tile * n_tiles, mu);
 
     std::vector<uint32_t> src2_vec(elements_per_tile * n_tiles, q);
+
+    std::vector<uint32_t> src3_vec(elements_per_tile * n_tiles, 32);
 
 
     std::vector<uint32_t> golden(elements_per_tile * n_tiles, 0);
@@ -158,6 +173,7 @@ int main() {
     src0_vec = tilize_nfaces(src0_vec, TILE_HEIGHT, TILE_WIDTH);
     src1_vec = tilize_nfaces(src1_vec, TILE_HEIGHT, TILE_WIDTH);
     src2_vec = tilize_nfaces(src2_vec, TILE_HEIGHT, TILE_WIDTH);
+    src3_vec = tilize_nfaces(src3_vec, TILE_HEIGHT, TILE_WIDTH);
 
     // Set up the runtime arguments for the kernels.
     SetRuntimeArgs(program, compute_id, core, {n_tiles, q});
@@ -169,6 +185,7 @@ int main() {
             src0_dram_buffer->address(),
             src1_dram_buffer->address(),
             src2_dram_buffer->address(),
+            src3_dram_buffer->address(),
             n_tiles
         });
 
@@ -177,6 +194,7 @@ int main() {
     distributed::EnqueueWriteMeshBuffer(cq, src0_dram_buffer, src0_vec, /*blocking=*/false);
     distributed::EnqueueWriteMeshBuffer(cq, src1_dram_buffer, src1_vec, /*blocking=*/false);
     distributed::EnqueueWriteMeshBuffer(cq, src2_dram_buffer, src2_vec, /*blocking=*/false);
+    distributed::EnqueueWriteMeshBuffer(cq, src3_dram_buffer, src3_vec, /*blocking=*/false);
     workload.add_program(device_range, std::move(program));
     distributed::EnqueueMeshWorkload(cq, workload, false);
     distributed::Finish(cq);

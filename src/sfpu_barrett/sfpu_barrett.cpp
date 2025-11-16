@@ -20,13 +20,13 @@ using namespace tt::tt_metal;
 #define OVERRIDE_KERNEL_PREFIX ""
 #endif
 
-uint32_t umulhi(uint32_t a, uint32_t b) {
+uint32_t umulhi(uint64_t a, uint64_t b) {
     return (uint32_t)(((uint64_t)a * (uint64_t)b) >> 32);
 }
 
-uint32_t u32_mod_const(uint32_t a, uint32_t q, uint32_t mu) {
-    uint32_t t = umulhi(a, mu);
-    uint32_t r = a - t * q;
+uint32_t u32_mod_const(uint64_t a, uint64_t q, uint64_t mu) {
+    uint64_t t = umulhi(a, mu);
+    uint64_t r = a - t * q;
     if (r >= q) r -= q;
     return r;
 }
@@ -67,12 +67,19 @@ int main() {
     std::shared_ptr<distributed::MeshBuffer> src3_dram_buffer =
         distributed::MeshBuffer::create(buffer_config, dram_config, mesh_device.get());
 
+    std::shared_ptr<distributed::MeshBuffer> src4_dram_buffer =
+        distributed::MeshBuffer::create(buffer_config, dram_config, mesh_device.get());
+
+    std::shared_ptr<distributed::MeshBuffer> src5_dram_buffer = 
+        distributed::MeshBuffer::create(buffer_config, dram_config, mesh_device.get());
+
     std::shared_ptr<distributed::MeshBuffer> dst_dram_buffer =
         distributed::MeshBuffer::create(buffer_config, dram_config, mesh_device.get());
 
     // Allocate 2 circular buffers for input and output.
-    constexpr uint32_t src0_cb_index = tt::CBIndex::c_0;
     constexpr uint32_t num_input_tiles = 2;
+
+    constexpr uint32_t src0_cb_index = tt::CBIndex::c_0;
     CircularBufferConfig cb_src0_config =
         CircularBufferConfig(num_input_tiles * tile_size_bytes, {{src0_cb_index, tt::DataFormat::UInt32}})
             .set_page_size(src0_cb_index, tile_size_bytes);
@@ -96,6 +103,17 @@ int main() {
             .set_page_size(src3_cb_index, tile_size_bytes);
     tt_metal::CreateCircularBuffer(program, core, cb_src3_config);
 
+    constexpr uint32_t src4_cb_index = tt::CBIndex::c_4;
+    CircularBufferConfig cb_src4_config =
+        CircularBufferConfig(num_input_tiles * tile_size_bytes, {{src4_cb_index, tt::DataFormat::UInt32}})
+            .set_page_size(src4_cb_index, tile_size_bytes);
+    tt_metal::CreateCircularBuffer(program, core, cb_src4_config);
+
+    constexpr uint32_t src5_cb_index = tt::CBIndex::c_5;
+    CircularBufferConfig cb_src5_config =
+        CircularBufferConfig(num_input_tiles * tile_size_bytes, {{src5_cb_index, tt::DataFormat::UInt32}})
+            .set_page_size(src5_cb_index, tile_size_bytes);
+    tt_metal::CreateCircularBuffer(program, core, cb_src5_config);
 
     constexpr uint32_t output_cb_index = tt::CBIndex::c_16;
     CircularBufferConfig cb_output_config =
@@ -108,9 +126,11 @@ int main() {
     TensorAccessorArgs(*src1_dram_buffer).append_to(reader_compile_time_args);
     TensorAccessorArgs(*src2_dram_buffer).append_to(reader_compile_time_args);
     TensorAccessorArgs(*src3_dram_buffer).append_to(reader_compile_time_args);
+    TensorAccessorArgs(*src4_dram_buffer).append_to(reader_compile_time_args);
+    TensorAccessorArgs(*src5_dram_buffer).append_to(reader_compile_time_args);
     KernelHandle reader_id = CreateKernel(
         program,
-        "/home/southbell/tt-example/src/sfpu_remainder/kernels/reader.cpp",
+        "/home/southbell/tt-example/src/sfpu_barrett/kernels/reader.cpp",
         core,
         DataMovementConfig{
             .processor = DataMovementProcessor::RISCV_1,
@@ -121,7 +141,7 @@ int main() {
     TensorAccessorArgs(*dst_dram_buffer).append_to(writer_compile_time_args);
     KernelHandle writer_id = CreateKernel(
         program,
-        "/home/southbell/tt-example/src/sfpu_remainder/kernels/writer.cpp",
+        "/home/southbell/tt-example/src/sfpu_barrett/kernels/writer.cpp",
         core,
         DataMovementConfig{
             .processor = DataMovementProcessor::RISCV_0,
@@ -130,7 +150,7 @@ int main() {
 
     KernelHandle compute_id = CreateKernel(
         program,
-        "/home/southbell/tt-example/src/sfpu_remainder/kernels/compute.cpp",
+        "/home/southbell/tt-example/src/sfpu_barrett/kernels/compute.cpp",
         core,
         ComputeConfig{
             .math_fidelity = MathFidelity::HiFi4,
@@ -139,24 +159,41 @@ int main() {
 
 
     uint32_t q = 8650753;
-    uint32_t mu = 496;  // uint32_t mu = (uint32_t)((1ull << 32) / q); 결과 값 바로 저장
+    // floor(2^64 / q) 계산
+    uint64_t max_val = UINT64_MAX;
+
+    uint64_t divisor = 8650753ULL;
+    uint64_t q_mu = max_val / divisor;
+    uint64_t r_mu = max_val % divisor;
+
+    uint64_t result = q_mu + (r_mu + 1) / divisor;
+
+    uint32_t mu_hi = result >> 32;
+    uint32_t mu_lo = result & 0xFFFFFFFFu;
+
     // Initialize the input data with random values and use as the input to the kernel.
     std::random_device rd;
     std::mt19937 engine(rd());
-    // 2^23 = 8388608 까지는 mu와 곱해도 overflow가 나지 않기 때문에 테스트를 통과하지만 
-    // 더 큰 수에서 overflow가 날 시 결과가 맞지 않는다.
-    std::uniform_int_distribution<std::uint32_t> dist(0, 32000000);
+
+    std::uniform_int_distribution<std::uint32_t> dist(0, 8650752);
 
     std::vector<uint32_t> src0_vec(elements_per_tile * n_tiles, 0);
     for (uint32_t& v : src0_vec) {
         v = dist(engine);
     }
 
-    std::vector<uint32_t> src1_vec(elements_per_tile * n_tiles, mu);
+    std::vector<uint32_t> src1_vec(elements_per_tile * n_tiles, 0);
+    for (uint32_t& v : src1_vec) {
+        v = dist(engine);
+    }
 
-    std::vector<uint32_t> src2_vec(elements_per_tile * n_tiles, q);
+    std::vector<uint32_t> src2_vec(elements_per_tile * n_tiles, mu_hi);
 
-    std::vector<uint32_t> src3_vec(elements_per_tile * n_tiles, 32);
+    std::vector<uint32_t> src3_vec(elements_per_tile * n_tiles, mu_lo);
+
+    std::vector<uint32_t> src4_vec(elements_per_tile * n_tiles, q);
+
+    std::vector<uint32_t> src5_vec(elements_per_tile * n_tiles, 0);
 
 
     std::vector<uint32_t> golden(elements_per_tile * n_tiles, 0);
@@ -166,7 +203,7 @@ int main() {
 
     std::vector<uint32_t> barret(elements_per_tile * n_tiles, 0);
     for(int i = 0; i < elements_per_tile * n_tiles; i++) {
-        barret.at(i) = u32_mod_const(src0_vec.at(i), q, mu);
+        barret.at(i) = u32_mod_const(src0_vec.at(i), q, result);
     }
 
 
@@ -174,6 +211,8 @@ int main() {
     src1_vec = tilize_nfaces(src1_vec, TILE_HEIGHT, TILE_WIDTH);
     src2_vec = tilize_nfaces(src2_vec, TILE_HEIGHT, TILE_WIDTH);
     src3_vec = tilize_nfaces(src3_vec, TILE_HEIGHT, TILE_WIDTH);
+    src4_vec = tilize_nfaces(src4_vec, TILE_HEIGHT, TILE_WIDTH);
+    src5_vec = tilize_nfaces(src5_vec, TILE_HEIGHT, TILE_WIDTH);
 
     // Set up the runtime arguments for the kernels.
     SetRuntimeArgs(program, compute_id, core, {n_tiles, q});
@@ -186,6 +225,8 @@ int main() {
             src1_dram_buffer->address(),
             src2_dram_buffer->address(),
             src3_dram_buffer->address(),
+            src4_dram_buffer->address(),
+            src5_dram_buffer->address(),
             n_tiles
         });
 
@@ -195,6 +236,8 @@ int main() {
     distributed::EnqueueWriteMeshBuffer(cq, src1_dram_buffer, src1_vec, /*blocking=*/false);
     distributed::EnqueueWriteMeshBuffer(cq, src2_dram_buffer, src2_vec, /*blocking=*/false);
     distributed::EnqueueWriteMeshBuffer(cq, src3_dram_buffer, src3_vec, /*blocking=*/false);
+    distributed::EnqueueWriteMeshBuffer(cq, src4_dram_buffer, src4_vec, /*blocking=*/false);
+    distributed::EnqueueWriteMeshBuffer(cq, src5_dram_buffer, src5_vec, /*blocking=*/false);
     workload.add_program(device_range, std::move(program));
     distributed::EnqueueMeshWorkload(cq, workload, false);
     distributed::Finish(cq);
@@ -221,7 +264,6 @@ int main() {
             break;
         }
     }
-
 
 
     // Finally, close the device.

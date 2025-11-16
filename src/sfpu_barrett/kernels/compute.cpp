@@ -56,7 +56,10 @@ inline void mul32x32_to_64_face(uint32_t w0_hi_idx, uint32_t w0_lo_idx, uint32_t
         vUInt sum_lo = sum & amount;
         vUInt sum_hi = sum >> 16;
 
-        dst_reg[t_lo_idx_base + i] = vUInt(dst_reg[w0_lo_idx_base + i]) | (sum_lo << 16);
+        vUInt lo = vUInt(dst_reg[w0_lo_idx_base + i]);   // low 16 bits already zero-extended
+        vUInt hi = (sum_lo << 16);
+        vUInt out = lo | hi;
+        dst_reg[t_lo_idx_base + i] = hi;
         dst_reg[t_hi_idx_base + i] = vUInt(dst_reg[w3_idx_base + i]) + mid_hi + sum_hi;
         
     }
@@ -202,39 +205,39 @@ inline void barrett_reduce_face(uint32_t r_hi, uint32_t r_lo, uint32_t q_hi, uin
 
 inline void split_32_to_16(uint32_t a_idx, uint32_t hi_idx, uint32_t lo_idx) {
     MATH(_llk_math_eltwise_binary_sfpu_params_<false>(
-        split_32_to_16_face, a_idx, hi_idx, lo_idx));
+        split_32_to_16_face, a_idx, hi_idx, lo_idx, (int)ckernel::VectorMode::RC));
 }
 
 inline void mul32x32_to_64(uint32_t w0_hi_idx, uint32_t w0_lo_idx, uint32_t w1_idx, uint32_t w2_idx, uint32_t w3_idx, uint32_t t_hi_idx, uint32_t t_lo_idx) {
     MATH(_llk_math_eltwise_binary_sfpu_params_<false>(
-        mul32x32_to_64_face, w0_hi_idx, w0_lo_idx, w1_idx, VectorMode::RC, w2_idx, w3_idx, t_hi_idx, t_lo_idx));
+        mul32x32_to_64_face, w0_hi_idx, w0_lo_idx, w1_idx, (int)ckernel::VectorMode::RC, w2_idx, w3_idx, t_hi_idx, t_lo_idx));
 }
 
 inline void add128(uint32_t w0, uint32_t w1, uint32_t w2, uint32_t w3, uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3) {
     MATH(_llk_math_eltwise_binary_sfpu_params_<false>(
-        add128_face, w0, w1, w2, VectorMode::RC, w3, a0, a1, a2, a3));
+        add128_face, w0, w1, w2, (int)ckernel::VectorMode::RC, w3, a0, a1, a2, a3));
 }
 
 inline void copy_reg(uint32_t src, uint32_t dst) {
-    MATH(_llk_math_eltwise_binary_sfpu_params_<false>(copy_reg_face, src, dst, 0));
+    MATH(_llk_math_eltwise_binary_sfpu_params_<false>(copy_reg_face, src, dst, dst, (int)ckernel::VectorMode::RC));
 }
 
 inline void barrett_reduce(uint32_t r_hi, uint32_t r_lo, uint32_t q_hi, uint32_t q_lo, uint32_t q) {
     MATH(_llk_math_eltwise_binary_sfpu_params_<false>(barrett_reduce_face, r_hi, r_lo, q_hi, VectorMode::RC, q_lo, q));
 }
 
-__attribute__((noinline)) void mul32x32(uint32_t a, uint32_t b, 
+void mul32x32(uint32_t a, uint32_t b, 
     uint32_t a1, uint32_t a0, uint32_t b1, uint32_t b0,
     uint32_t w0, uint32_t w1, uint32_t w2, uint32_t w3
 ) {
     split_32_to_16(a, a1, a0);
     split_32_to_16(b, b1, b0);
 
-    mul_int32_tile_init();
-    mul_uint32_tile(a0,b0,w0);
-    mul_uint32_tile(a0,b1,w1);  
-    mul_uint32_tile(a1,b0,w2);  
-    mul_uint32_tile(a1,b1,w3);  
+    ckernel::mul_int32_tile_init();
+    ckernel::mul_uint32_tile(a0, b0, w0);
+    ckernel::mul_uint32_tile(a0, b1, w1);
+    ckernel::mul_uint32_tile(a1, b0, w2);
+    ckernel::mul_uint32_tile(a1, b1, w3);
 
 
     uint32_t w0_hi = b1;
@@ -295,16 +298,16 @@ void MAIN {
     // 6: t_hi , 7: t_lo
     uint32_t t_hi = 6;
     uint32_t t_lo = 7;
-    mul32x32(0,1,6,7,8,9,10,11,12,13);
+    // mul32x32(0,1,6,7,8,9,10,11,12,13);
 
     // barret reduce
     // t mod q
     // q_hat = floor((t * mu) / 2^64)
     // 8: qhat_hi , 9: qhat_lo
     mul32x32(7, 3, 10, 11, 12, 13, 14, 15 ,16 ,17); // 10: hi0 , 11: lo0
-    mul32x32(7, 2, 12,13,14,15,16,17,18,19);        // 12: hi1 , 13: lo1
-    mul32x32(6,3,14,15,16,17,18,19,20,21);          // 14: hi2 , 15: lo2
-    mul32x32(6, 2, 16,17,18,19,20,21,22,23);         // 16: hi3 , 17: lo3
+    // mul32x32(7, 2, 12,13,14,15,16,17,18,19);        // 12: hi1 , 13: lo1
+    // mul32x32(6,3,14,15,16,17,18,19,20,21);          // 14: hi2 , 15: lo2
+    // mul32x32(6, 2, 16,17,18,19,20,21,22,23);         // 16: hi3 , 17: lo3
 
     uint32_t w0 = 18;
     uint32_t w1 = 19;

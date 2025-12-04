@@ -210,7 +210,7 @@ inline void split_32_to_16(uint32_t a_idx, uint32_t hi_idx, uint32_t lo_idx) {
 
 inline void mul32x32_to_64(uint32_t w0_hi_idx, uint32_t w0_lo_idx, uint32_t w1_idx, uint32_t w2_idx, uint32_t w3_idx, uint32_t t_hi_idx, uint32_t t_lo_idx) {
     MATH(_llk_math_eltwise_binary_sfpu_params_<false>(
-        mul32x32_to_64_face, w0_hi_idx, w0_lo_idx, w1_idx, (int)ckernel::VectorMode::RC, w2_idx, w3_idx, t_hi_idx, t_lo_idx));
+        mul32x32_to_64_face, w0_hi_idx, w0_lo_idx, w1_idx, (int)ckernel::VectorMode::None, w2_idx, w3_idx, t_hi_idx, t_lo_idx));
 }
 
 inline void add128(uint32_t w0, uint32_t w1, uint32_t w2, uint32_t w3, uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3) {
@@ -298,13 +298,13 @@ void MAIN {
     // 6: t_hi , 7: t_lo
     uint32_t t_hi = 6;
     uint32_t t_lo = 7;
-    // mul32x32(0,1,6,7,8,9,10,11,12,13);
+    mul32x32(0,1,6,7,8,9,10,11,12,13);
 
     // barret reduce
     // t mod q
     // q_hat = floor((t * mu) / 2^64)
     // 8: qhat_hi , 9: qhat_lo
-    mul32x32(7, 3, 10, 11, 12, 13, 14, 15 ,16 ,17); // 10: hi0 , 11: lo0
+    // mul32x32(7, 3, 10, 11, 12, 13, 14, 15 ,16 ,17); // 10: hi0 , 11: lo0
     // mul32x32(7, 2, 12,13,14,15,16,17,18,19);        // 12: hi1 , 13: lo1
     // mul32x32(6,3,14,15,16,17,18,19,20,21);          // 14: hi2 , 15: lo2
     // mul32x32(6, 2, 16,17,18,19,20,21,22,23);         // 16: hi3 , 17: lo3
